@@ -1,0 +1,35 @@
+一些系统调用
+
+#include <sys/stat.h>
+#include <fcntl.h>
+	int open(const char *pathname, int flags, ... /* mode_t mode */);
+	return fd, or -1 on error
+
+#include <fcntl.h>
+	int creat(const char *pathname, mode_t mode);
+	return fd, or -1 on error
+	
+	文件控制操作
+	int fcntl(int fd, int cmd, ...);
+	return on success depends on cmd or -1 on error
+
+#include <unistd.h>
+	ssize_t write(int fd, void *buffer, size_t count);
+	return number of bytes written or -1 on error
+
+	ssize_t read(int fd, void *buffer, size_t count);
+	similar.
+
+	int close(int fd);
+	return 0 or -1
+
+	改变文件偏移量
+	off_t lseek(int fd, off_t offset, int whence);
+	return new file offset（新的文件偏移量） or -1
+	whence是相对参照点，有SEEK_SET SEEK_CUR SEEK_END
+	跟c语言封装的文件操作那套差不多
+
+#include <sys/ioctl.h>
+	通用io以外的操作
+	int ioctl(int fd, int request,  ... /* apgp */);
+	request是操作
