@@ -63,25 +63,25 @@ int unavaCount;
 void analyseArgs(int argc, char *argv[]) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-a") == 0) {
-            displayContent &= 1;
+            displayContent |= 1;
         }
         else if (strcmp(argv[i], "-R") == 0) {
-            displayContent &= 2;
+            displayContent |= 2;
         }
         else if (strcmp(argv[i], "-t") == 0) {
-            displayOrder &= 1;
+            displayOrder |= 1;
         }
         else if (strcmp(argv[i], "-s") == 0) {
-            displayOrder &= 2;
+            displayOrder |= 2;
         }
         else if (strcmp(argv[i], "-r") == 0) {
-            displayOrder &= 4;
+            displayOrder |= 4;
         }
         else if (strcmp(argv[i], "-l") == 0) {
-            displayFormat &= 1;
+            displayFormat |= 1;
         }
         else if (strcmp(argv[i], "-i") == 0) {
-            displayFormat &= 2;
+            displayFormat |= 2;
         }
         else {
             int isAva = lstat(argv[i], pendingObjectStat+pendingObjectCount);
@@ -93,9 +93,9 @@ void analyseArgs(int argc, char *argv[]) {
             }
         }
     }
-    if (pendingObjectCount == 0) {
-        lstat(".", pendingObjectStat + 0);
-        strcpy(globalPendingObject[pendingObjectCount++], ".");
+    if (pendingObjectCount == 0 && unavaCount == 0) {
+        lstat(cwdBuffer, pendingObjectStat + 0);
+        strcpy(globalPendingObject[pendingObjectCount++], cwdBuffer);
     }
 }
 
@@ -119,7 +119,7 @@ int fileCmp(int idx1, int idx2) {
 }
 
 void printColorName(char* name, int type) { // 最后写
-    char cstart[MAX_BUFFER_SIZE];
+    char cstart[MAX_BUFFER_SIZE] = {0};
     char cend[] = "\033[0m";
     switch (type) {
     case 0: // 普通文件
@@ -146,9 +146,33 @@ void printColorName(char* name, int type) { // 最后写
         break;
     default:
         // 这对吗？
-        fprintf(stderr, "错误的文件类型");
+        // fprintf(stderr, "错误的文件类型");
     }
     printf("%s%s%s", cstart, name, cend);
+}
+
+int getFileType(mode_t perm) {
+    if (S_ISREG(perm)) {
+        return 0;
+    }
+    else if (S_ISDIR(perm)) {
+        return 1;
+    }
+    else if (S_ISCHR(perm)) {
+        return 2;
+    }
+    else if (S_ISBLK(perm)) {
+        return 3;
+    }
+    else if (S_ISFIFO(perm)) {
+        return 4;
+    }
+    else if ((perm & __S_IFMT) == __S_IFSOCK) {
+        return 5;
+    }
+    else if (S_ISLNK(perm)) {
+        return 6;
+    }
 }
 
 void filePermStr(mode_t perm, char* strbuf, int* filetype) {
@@ -203,9 +227,9 @@ void showSingleFileInLine(char* name, int disiNode, struct stat* st) {
     filePermStr(st->st_mode, mode, &filetype);
     struct passwd* pw = getpwuid(st->st_uid);
     struct group* gr = getgrgid(st->st_gid);
-    timestr, modifyTimeStr(st->st_mtime, timestr);
+    modifyTimeStr(st->st_mtime, timestr);
     if (disiNode) {
-        printf("%d ", st->st_ino);
+        printf("%lu ", st->st_ino);
     }
     printf("%s %d %s %s %d %s ", mode, st->st_nlink,
         pw->pw_name, gr->gr_name, st->st_size, timestr
@@ -230,16 +254,17 @@ void quickSort(int* array, int l, int r)
 			++begin;
 		while (begin < end && fileCmp(end, key) > -1)
 			--end;
-		swap(array[begin], array[end]);
+		swapInt(array + begin, array + end);
 	}
-	if (fileCmp(begin, key) == -1) swap(array[begin], array[key]);
+	if (fileCmp(begin, key) == -1) swapInt(array + begin, array + key);
 	quickSort(array, l, begin - 1);
 	quickSort(array, end + 1, r);
 }
 
-void printIdxObj(int idx, int flag, char* objList[], struct stat statList[]) {
+void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct stat statList[], char* prepath) {
     if (!S_ISDIR(statList[idx].st_mode)) {
-        printf("%s\n", objList[idx]);
+        printColorName(objList[idx], getFileType(statList[idx].st_mode));
+        putchar('\n');
         if (flag) {
             printf("\n\n");
         }
@@ -247,12 +272,73 @@ void printIdxObj(int idx, int flag, char* objList[], struct stat statList[]) {
     }
     // followings dir
     
+    char localPendingObject[MAX_PEND_NUM][MAX_BUFFER_SIZE + 1] = { 0 };
+    struct stat localObjStat[MAX_PEND_NUM] = { 0 };
+    int localPendingCount = 0;
+    int localIdxArr[MAX_PEND_NUM] = { 0 };
+
+    char newDir[MAX_BUFFER_SIZE + 1];
+    sprintf(newDir, "%s%s", prepath, objList[idx]);
+
+    DIR* dirp = opendir(newDir);
+    struct dirent* dp;
+    if (dirp == NULL) {
+        perror("没有这个文件或目录\n");
+        return;
+    }
+    while (1) {
+        dp = readdir(dirp);
+        if (dp == NULL) {
+            break;
+        }
+        if ((strcmp(dp->d_name, ".")==0 || strcmp(dp->d_name, "..")==0) && displayContent & 1 == 0) {
+            continue;
+        }
+        strcpy(localPendingObject[localPendingCount++], dp->d_name);
+    }
+
+    for (int i=0; i<localPendingCount; ++i) {
+        localIdxArr[i] = i;
+    }
+    quickSort(localIdxArr, 0, localPendingCount - 1);
+    //printf("newDir : %s\n", newDir);
+    //printf("format: %d\n", displayFormat);
+    if (displayFormat & 1) {
+        for (int i=0; i<localPendingCount; ++i) {
+            //printf("line format pre:\n");
+            showSingleFileInLine(localPendingObject[i], displayFormat & 2, localObjStat + i);
+        }
+    }
+    else {
+        for (int i=0; i<localPendingCount; ++i) {
+            if (displayFormat & 2) {
+                printf("%lu ", localObjStat[i].st_ino);
+            }
+            printColorName(localPendingObject[i], getFileType(localObjStat[i].st_mode));
+            printf("  ");
+            if ((i + 1) % 8 == 0) {
+                putchar('\n');
+            }
+        }
+    }
+
 }
 
 void pendObjects() {
+    for (int i=0; i<unavaCount; ++i) {
+        printf("没有这个文件或目录：%s\n", unavaObject[i]);
+    }
+    if (unavaCount)
+        putchar('\n');
     int flag = pendingObjectCount - 1;
     for (int i=0; i<pendingObjectCount; ++i) {
-        printIdxObj(i, flag, globalPendingObject, pendingObjectStat);
+        // if (globalPendingObject[i][0] != '/')
+        //     printIdxObj(i, flag, globalPendingObject, pendingObjectStat, cwdBuffer);
+        // else {
+        //     printIdxObj(i, flag, globalPendingObject, pendingObjectStat, "");
+        // }
+        printIdxObj(i, flag, globalPendingObject, pendingObjectStat, "");
+        putchar('\n');
     }
 }
 
@@ -263,6 +349,6 @@ int main(int argc, char *argv[]) {
         idxArr[i] = i;
     }
     quickSort(idxArr, 0, pendingObjectCount - 1);
-
+    pendObjects();
     return 0;
 }
