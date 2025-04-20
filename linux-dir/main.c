@@ -1,7 +1,9 @@
+//#define __USE_ATFILE
+#define _BSD_SOURCE 1
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <bits/stat.h>
+//#include <bits/stat.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,9 +47,18 @@ int displayOrder;
 // 11 -> 3 -i -l
 int displayFormat;
 
+// 当前目录路径
 char cwdBuffer[MAX_BUFFER_SIZE + 1];
+
+// 要处理的对象列表
 char globalPendingObject[MAX_PEND_NUM][MAX_BUFFER_SIZE + 1];
+struct stat pendingObjectStat[MAX_PEND_NUM];
 int pendingObjectCount;
+int idxArr[MAX_PEND_NUM];
+
+// 不存在的对象/无法处理的
+char unavaObject[MAX_PEND_NUM][MAX_BUFFER_SIZE + 1];
+int unavaCount;
 
 void analyseArgs(int argc, char *argv[]) {
     for (int i = 1; i < argc; ++i) {
@@ -73,27 +84,34 @@ void analyseArgs(int argc, char *argv[]) {
             displayFormat &= 2;
         }
         else {
-            strcpy(globalPendingObject[pendingObjectCount++], argv[i]);
+            int isAva = lstat(argv[i], pendingObjectStat+pendingObjectCount);
+            if (isAva == 0) {
+                strcpy(globalPendingObject[pendingObjectCount++], argv[i]);
+            }
+            else {
+                strcpy(unavaObject[unavaCount++], argv[i]);
+            }
         }
+    }
+    if (pendingObjectCount == 0) {
+        lstat(".", pendingObjectStat + 0);
+        strcpy(globalPendingObject[pendingObjectCount++], ".");
     }
 }
 
-int fileCmp(char* path1, char* path2) {
+int fileCmp(int idx1, int idx2) {
     int res = 0; // return -1, 0, 1
-    struct stat stat1, stat2;
-    stat(path1, &stat1);
-    stat(path2, &stat2);
     if (displayOrder & 1) {
-        if (stat1.st_mtime != stat2.st_mtime) {
-            res =  (stat1.st_mtime > stat2.st_mtime) ? -1 : 1;
+        if (pendingObjectStat[idx1].st_mtime != pendingObjectStat[idx2].st_mtime) {
+            res =  (pendingObjectStat[idx1].st_mtime > pendingObjectStat[idx2].st_mtime) ? -1 : 1;
         }
     }
     if (displayOrder & 2) {
-        if (stat1.st_size != stat2.st_size) {
-            res = (stat1.st_size > stat2.st_size) ? -1 : 1;
+        if (pendingObjectStat[idx1].st_size != pendingObjectStat[idx2].st_size) {
+            res = (pendingObjectStat[idx1].st_size > pendingObjectStat[idx2].st_size) ? -1 : 1;
         }
     }
-    res = strcmp(path1, path2);
+    res = strcmp(globalPendingObject[idx1], globalPendingObject[idx2]);
     if (displayOrder & 4) {
         res = -res;
     }
@@ -196,9 +214,55 @@ void showSingleFileInLine(char* name, int disiNode, struct stat* st) {
     putchar('\n');
 }
 
+void swapInt(int* a, int* b) {
+    int tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+void quickSort(int* array, int l, int r)
+{
+	if (l > r) return;
+	int begin = l, end = r, key = l - 1;
+	while (begin < end)
+	{
+		while (begin < end && fileCmp(begin, key) < 1)
+			++begin;
+		while (begin < end && fileCmp(end, key) > -1)
+			--end;
+		swap(array[begin], array[end]);
+	}
+	if (fileCmp(begin, key) == -1) swap(array[begin], array[key]);
+	quickSort(array, l, begin - 1);
+	quickSort(array, end + 1, r);
+}
+
+void printIdxObj(int idx, int flag, char* objList[], struct stat statList[]) {
+    if (!S_ISDIR(statList[idx].st_mode)) {
+        printf("%s\n", objList[idx]);
+        if (flag) {
+            printf("\n\n");
+        }
+        return;
+    }
+    // followings dir
+    
+}
+
+void pendObjects() {
+    int flag = pendingObjectCount - 1;
+    for (int i=0; i<pendingObjectCount; ++i) {
+        printIdxObj(i, flag, globalPendingObject, pendingObjectStat);
+    }
+}
+
 int main(int argc, char *argv[]) {
     getcwd(cwdBuffer, MAX_BUFFER_SIZE);
     analyseArgs(argc, argv);
-    
+    for (int i=0; i<pendingObjectCount; ++i) {
+        idxArr[i] = i;
+    }
+    quickSort(idxArr, 0, pendingObjectCount - 1);
+
     return 0;
 }
