@@ -10,6 +10,7 @@
 #include <pwd.h>
 #include <time.h>
 #include <stdlib.h>
+#include <math.h>
 
 /* ls
  显示什么
@@ -124,11 +125,15 @@ void analyseArgs(int argc, char *argv[]) {
     }
     if (pendingObjectCount == 0 && unavaCount == 0) {
         lstat(cwdBuffer, pendingObjectStat + 0);
-        strcpy(globalPendingObject[pendingObjectCount++], cwdBuffer);
+        strcpy(globalPendingObject[pendingObjectCount++], ".");
     }
 }
 
-int fileCmp(int idx1, int idx2, char objList[][MAX_BUFFER_SIZE + 1], struct stat statList[]) {
+int fileCmp(
+    int idx1, int idx2,
+    char objList[][MAX_BUFFER_SIZE + 1],
+    struct stat statList[]
+) {
     int res = 0; // return -1, 0, 1
     if (displayOrder & 1) {
         if (statList[idx1].st_mtime != statList[idx2].st_mtime) {
@@ -149,7 +154,7 @@ int fileCmp(int idx1, int idx2, char objList[][MAX_BUFFER_SIZE + 1], struct stat
     return res;
 }
 
-void printColorName(char* name, int type) {
+void printColorName(char* name, int type, int maxWidth) {
     char cstart[MAX_BUFFER_SIZE] = {0};
     char cend[] = "\033[0m";
     switch (type) {
@@ -173,7 +178,9 @@ void printColorName(char* name, int type) {
         // 这对吗？
         // fprintf(stderr, "错误的文件类型");
     }
-    printf("%s%s%s", cstart, name, cend);
+    printf("%s", cstart);
+    printf("%-*s", maxWidth, name);
+    printf("%s", cend);
 }
 
 int getFileType(mode_t perm) {
@@ -197,6 +204,9 @@ int getFileType(mode_t perm) {
     }
     else if (S_ISLNK(perm)) {
         return 6;
+    }
+    else {
+        return -1; // 未知类型
     }
 }
 
@@ -245,7 +255,10 @@ void modifyTimeStr(time_t mtime, char* strbuf) {
     strftime(strbuf, MAX_BUFFER_SIZE, "%Y-%m-%d %H:%M:%S", timeinfo);
 }
 
-void showSingleFileInLine(char* name, int disiNode, struct stat* st) {
+void showSingleFileInLine(
+    char* name, int disiNode, struct stat* st,
+    int maxUsrWidth, int maxGrpWidth
+) {
     char mode[MAX_BUFFER_SIZE + 1];
     char timestr[MAX_BUFFER_SIZE + 1];
     int filetype;
@@ -256,10 +269,11 @@ void showSingleFileInLine(char* name, int disiNode, struct stat* st) {
     if (disiNode) {
         printf("%lu ", st->st_ino);
     }
-    printf("%s %lu %s %s %lu %s ", mode, st->st_nlink,
-        pw->pw_name, gr->gr_name, st->st_size, timestr
-    );
-    printColorName(name, filetype);
+    printf("%-11s %3lu ", mode, st->st_nlink);
+    printf("%-*s ", maxUsrWidth, pw->pw_name);
+    printf("%-*s ", maxGrpWidth, gr->gr_name);
+    printf("%8lu %-20s", st->st_size, timestr);
+    printColorName(name, filetype, strlen(name));
     putchar('\n');
 }
 
@@ -269,7 +283,10 @@ void swapInt(int* a, int* b) {
     *b = tmp;
 }
 
-void quickSort(int* array, int l, int r, char objList[][MAX_BUFFER_SIZE + 1], struct stat statList[])
+void quickSort(
+    int* array, int l, int r,
+    char objList[][MAX_BUFFER_SIZE + 1], struct stat statList[]
+)
 {
 	if (l >= r) return;
 	int begin = l, end = r, key = l;
@@ -289,9 +306,30 @@ void quickSort(int* array, int l, int r, char objList[][MAX_BUFFER_SIZE + 1], st
 	quickSort(array, end + 1, r, objList, statList);
 }
 
-void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct stat statList[], char* prepath) {
+int getMaxWidth(struct stat* statList, int cnt, int* usr, int* grp) {
+    int maxUsrWidth = 0;
+    int maxGrpWidth = 0;
+    for (int i=0; i<cnt; ++i) {
+        struct passwd* pw = getpwuid(statList[i].st_uid);
+        struct group* gr = getgrgid(statList[i].st_gid);
+        if (strlen(pw->pw_name) > maxUsrWidth) {
+            maxUsrWidth = strlen(pw->pw_name);
+        }
+        if (strlen(gr->gr_name) > maxGrpWidth) {
+            maxGrpWidth = strlen(gr->gr_name);
+        }
+    }
+    *usr = maxUsrWidth;
+    *grp = maxGrpWidth;
+    return 0;
+}
+
+void printIdxObj(
+    int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1],
+    struct stat statList[], char* prepath
+) {
     if (!S_ISDIR(statList[idx].st_mode)) {
-        printColorName(objList[idx], getFileType(statList[idx].st_mode));
+        printColorName(objList[idx], getFileType(statList[idx].st_mode),strlen(objList[idx]));
         putchar('\n');
         if (flag) {
             printf("\n\n");
@@ -340,7 +378,8 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
     struct dirent* dp;
 
     while ((dp = readdir(dirp)) != NULL) {
-        if ((strcmp(dp->d_name, ".")==0 || strcmp(dp->d_name, "..")==0) && !(displayContent & 1) && objList == globalPendingObject) {
+        if ((strcmp(dp->d_name, ".")==0 || strcmp(dp->d_name, "..")==0) 
+            && !(displayContent & 1) && objList == globalPendingObject) {
             continue;
         }
         if (dp->d_name[0] == '.' && !(displayContent & 1)) {
@@ -372,18 +411,34 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
     }
     quickSort(localIdxArr, 0, localPendingCount - 1, localPendingObject, localObjStat);
     if (displayFormat & 1) {
+        int maxUsrWidth = 0;
+        int maxGrpWidth = 0;
+        getMaxWidth(localObjStat, localPendingCount, &maxUsrWidth, &maxGrpWidth);
         for (int i=0; i<localPendingCount; ++i) {
-            showSingleFileInLine(localPendingObject[localIdxArr[i]], displayFormat & 2, localObjStat + localIdxArr[i]);
+            showSingleFileInLine(
+                localPendingObject[localIdxArr[i]], displayFormat & 2,
+                localObjStat + localIdxArr[i], maxUsrWidth, maxGrpWidth
+            );
         }
     }
     else {
+        int objWidth[6] = { 0 };
+        for (int i=0; i<localPendingCount; ++i) { 
+            if (strlen(localPendingObject[localIdxArr[i]]) > objWidth[i % 6]) {
+                objWidth[i % 6] = strlen(localPendingObject[localIdxArr[i]]);
+            }
+        }
         for (int i=0; i<localPendingCount; ++i) {
             if (displayFormat & 2) {
-                printf("%lu ", localObjStat[localIdxArr[i]].st_ino);
+                printf("%-10lu ", localObjStat[localIdxArr[i]].st_ino);
             }
-            printColorName(localPendingObject[localIdxArr[i]], getFileType(localObjStat[localIdxArr[i]].st_mode));
-            printf("  ");
-            if ((i + 1) % 8 == 0 || i == localPendingCount - 1) {
+            printColorName(
+                localPendingObject[localIdxArr[i]],
+                getFileType(localObjStat[localIdxArr[i]].st_mode),
+                objWidth[localIdxArr[i] % 6]
+            );
+            printf("..");
+            if ((i + 1) % 6 == 0 || i == localPendingCount - 1) {
                 putchar('\n');
             }
         }
