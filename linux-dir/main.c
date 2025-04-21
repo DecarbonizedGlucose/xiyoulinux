@@ -107,7 +107,6 @@ int fileCmp(int idx1, int idx2, char objList[][MAX_BUFFER_SIZE + 1], struct stat
         }
     }
     if ((displayOrder & 2) && (res == 0)) {
-        printf("cmp size\n");
         if (pendingObjectStat[idx1].st_size != pendingObjectStat[idx2].st_size) {
             res = (statList[idx1].st_size > statList[idx2].st_size) ? -1 : 1;
         }
@@ -116,7 +115,6 @@ int fileCmp(int idx1, int idx2, char objList[][MAX_BUFFER_SIZE + 1], struct stat
         res = strcmp(objList[idx1], objList[idx2]);
     }
     if (displayOrder & 4) {
-        printf("reverse order\n");
         res = -res;
     }
     return res;
