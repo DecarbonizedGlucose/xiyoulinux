@@ -1,9 +1,7 @@
-//#define __USE_ATFILE
 #define _BSD_SOURCE 1
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
-//#include <bits/stat.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +9,7 @@
 #include <grp.h>
 #include <pwd.h>
 #include <time.h>
+#include <stdlib.h>
 
 /* ls
  显示什么
@@ -26,7 +25,7 @@
 */
 
 #define MAX_BUFFER_SIZE 1023
-#define MAX_PEND_NUM 1024
+#define PRI_PEND_NUM 1024
 
 // 00 -> 0 (default)
 // 01 -> 1 -a
@@ -51,13 +50,13 @@ int displayFormat;
 char cwdBuffer[MAX_BUFFER_SIZE + 1];
 
 // 要处理的对象列表
-char globalPendingObject[MAX_PEND_NUM][MAX_BUFFER_SIZE + 1];
-struct stat pendingObjectStat[MAX_PEND_NUM];
+char globalPendingObject[PRI_PEND_NUM][MAX_BUFFER_SIZE + 1];
+struct stat pendingObjectStat[PRI_PEND_NUM];
 int pendingObjectCount;
-int idxArr[MAX_PEND_NUM];
+int idxArr[PRI_PEND_NUM];
 
 // 不存在的对象/无法处理的
-char unavaObject[MAX_PEND_NUM][MAX_BUFFER_SIZE + 1];
+char unavaObject[PRI_PEND_NUM][MAX_BUFFER_SIZE + 1];
 int unavaCount;
 
 void analyseArgs(int argc, char *argv[]) {
@@ -82,6 +81,36 @@ void analyseArgs(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "-i") == 0) {
             displayFormat |= 2;
+        }
+        else if (argv[i][0] == '-') {
+            int len = strlen(argv[i]);
+            for (int j = 1; j < len; ++j) {
+                switch (argv[i][j]) {
+                case 'a':
+                    displayContent |= 1;
+                    break;
+                case 'R':
+                    displayContent |= 2;
+                    break;
+                case 't':
+                    displayOrder |= 1;
+                    break;
+                case 's':
+                    displayOrder |= 2;
+                    break;
+                case 'r':
+                    displayOrder |= 4;
+                    break;
+                case 'l':
+                    displayFormat |= 1;
+                    break;
+                 case 'i':
+                    displayFormat |= 2;
+                    break;
+                default:
+                    fprintf(stderr, "错误的参数：%s\n", argv[i]);
+                }
+            }
         }
         else {
             int isAva = lstat(argv[i], pendingObjectStat+pendingObjectCount);
@@ -269,12 +298,6 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
         }
         return;
     }
-    // followings dir
-    
-    char localPendingObject[MAX_PEND_NUM][MAX_BUFFER_SIZE + 1] = { 0 };
-    struct stat localObjStat[MAX_PEND_NUM] = { 0 };
-    int localPendingCount = 0;
-    int localIdxArr[MAX_PEND_NUM] = { 0 };
 
     char newDir[MAX_BUFFER_SIZE + 1];
     sprintf(newDir, "%s%s", prepath, objList[idx]);
@@ -289,9 +312,9 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
     char fileFullPath[MAX_BUFFER_SIZE + 1];    
 
     DIR* dirp = opendir(newDir);
-    struct dirent* dp;
+    
     if (dirp == NULL) {
-        printf("没有这个文件或目录:%s\n", newDir);
+        printf("权限不足，打开目录失败:%s\n", newDir);
         return;
     }
 
@@ -299,16 +322,45 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
         printf("%s:\n", newDir);
     }
 
-    while (1) {
-        dp = readdir(dirp);
-        if (dp == NULL) {
-            break;
-        }
+    int capacity = PRI_PEND_NUM;
+    int localPendingCount = 0;
+    char (*localPendingObject)[MAX_BUFFER_SIZE + 1] = malloc(capacity * sizeof(*localPendingObject));
+    struct stat* localObjStat = malloc(capacity * sizeof(struct stat));
+    int* localIdxArr = malloc(capacity * sizeof(int));
+
+    if (!localPendingObject || !localObjStat || !localIdxArr) {
+        perror("内存分配失败");
+        closedir(dirp);
+        free(localPendingObject);
+        free(localObjStat);
+        free(localIdxArr);
+        return;
+    }
+
+    struct dirent* dp;
+
+    while ((dp = readdir(dirp)) != NULL) {
         if ((strcmp(dp->d_name, ".")==0 || strcmp(dp->d_name, "..")==0) && !(displayContent & 1) && objList == globalPendingObject) {
             continue;
         }
         if (dp->d_name[0] == '.' && !(displayContent & 1)) {
             continue;
+        }
+
+        if (localPendingCount >= capacity) {
+            capacity *= 2;
+            localPendingObject = realloc(localPendingObject, capacity * sizeof(*localPendingObject));
+            localObjStat = realloc(localObjStat, capacity * sizeof(struct stat));
+            localIdxArr = realloc(localIdxArr, capacity * sizeof(int));
+
+            if (!localPendingObject || !localObjStat || !localIdxArr) {
+                perror("内存扩展失败");
+                closedir(dirp);
+                free(localPendingObject);
+                free(localObjStat);
+                free(localIdxArr);
+                return;
+            }
         }
         strcpy(localPendingObject[localPendingCount++], dp->d_name);
     }
@@ -327,7 +379,7 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
     else {
         for (int i=0; i<localPendingCount; ++i) {
             if (displayFormat & 2) {
-                printf("%lu ", localObjStat[i].st_ino);
+                printf("%lu ", localObjStat[localIdxArr[i]].st_ino);
             }
             printColorName(localPendingObject[localIdxArr[i]], getFileType(localObjStat[localIdxArr[i]].st_mode));
             printf("  ");
@@ -336,18 +388,28 @@ void printIdxObj(int idx, int flag, char objList[][MAX_BUFFER_SIZE + 1], struct 
             }
         }
     }
+
+    closedir(dirp);
+
     if (displayContent & 2) {
         for (int i=0; i<localPendingCount; ++i) {
-            if (S_ISDIR(localObjStat[i].st_mode) && strcmp(localPendingObject[i], ".") != 0 && strcmp(localPendingObject[i], "..") != 0) {
-                printIdxObj(i, flag, localPendingObject, localObjStat, newDir);
+            if (S_ISDIR(localObjStat[localIdxArr[i]].st_mode) && strcmp(localPendingObject[localIdxArr[i]], ".") != 0 && strcmp(localPendingObject[localIdxArr[i]], "..") != 0) {
+                printIdxObj(localIdxArr[i], flag, localPendingObject, localObjStat, newDir);
             }
         }
+    }
+
+    free(localPendingObject);
+    free(localObjStat);
+    free(localIdxArr);
+    if (flag) {
+        printf("\n");
     }
 }
 
 void pendObjects() {
     for (int i=0; i<unavaCount; ++i) {
-        printf("没有这个文件或目录：%s\n", unavaObject[i]);
+        printf("没有这个文件或目录或没有权限打开：%s\n", unavaObject[i]);
     }
     if (unavaCount)
         putchar('\n');
