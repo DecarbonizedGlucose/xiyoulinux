@@ -25,8 +25,8 @@
  -i 显示每个文件索引编号（i-node编号）
 */
 
-#define MAX_BUFFER_SIZE 1023
-#define PRI_PEND_NUM 1024
+#define MAX_BUFFER_SIZE 16383
+#define PRI_PEND_NUM 16384
 
 // 00 -> 0 (default)
 // 01 -> 1 -a
