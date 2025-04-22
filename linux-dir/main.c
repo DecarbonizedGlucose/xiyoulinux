@@ -435,9 +435,9 @@ void printIdxObj(
             printColorName(
                 localPendingObject[localIdxArr[i]],
                 getFileType(localObjStat[localIdxArr[i]].st_mode),
-                objWidth[localIdxArr[i] % 6]
+                objWidth[i % 6]
             );
-            printf("..");
+            printf("  ");
             if ((i + 1) % 6 == 0 || i == localPendingCount - 1) {
                 putchar('\n');
             }
