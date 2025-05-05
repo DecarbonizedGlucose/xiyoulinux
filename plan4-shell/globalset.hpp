@@ -24,6 +24,9 @@ std::string LAST_PATH;
 // 好像用不到？
 //struct stat *DIR_STAT_ARR = new struct stat[ARR_SIZE];
 
+static std::string lineinput;
+bool eof_without_ctrl_D = false;
+
 pid_t SHELL_PID;
 pid_t FG_PGID;
 std::vector<pid_t> BG_PGID_ARR;
@@ -31,6 +34,30 @@ std::vector<pid_t> BG_PGID_ARR;
 void sys_err(const char* str) {
     perror(str);
     exit(1);
+}
+
+void readLineCommand() {
+    std::cin.sync(); // 相当于 fflush(stdin)
+    std::cin.clear(); // 清除输入流的错误标志
+    std::getline(std::cin, lineinput);
+    if (std::cin.eof()) {
+        if (eof_without_ctrl_D) {
+            /* Ctrl-C and Ctrl-\ */
+            eof_without_ctrl_D = false;
+            std::cout << std::endl;
+        }
+        else {
+            // Ctrl+D
+            std::cout << std::endl;
+            std::cout << "Exit caused by Ctrl-D." << std::endl;
+            std::cout << "Thanks for using." << std::endl;
+            exit(0);
+        }
+    }
+    if (lineinput.back() == '\n') {
+        lineinput.pop_back();
+    }
+    std::cin.sync();
 }
 
 void setDisplayDir() {
@@ -42,7 +69,7 @@ void setDisplayDir() {
     }
 }
 
-void preset() {
+void info_preset() {
     char _cur_path[BUFFER_SIZE];
     char _host_name[BUFFER_SIZE];
     getcwd(_cur_path, BUFFER_SIZE - 1);
@@ -53,6 +80,9 @@ void preset() {
     CUR_PATH = _cur_path;
     USR_HOME_PATH = "/home/" + USR_NAME;
     setDisplayDir();
+    HOST_NAME = _host_name;
+    SHELL_PID = getpid(); // 这时候shell_pid就是fg_pid
+    FG_PGID = getpgrp(); // 因为shell是前台进程组长
 }
 
 void cdset(std::string new_dir) {

@@ -10,7 +10,7 @@
 #define F_GREEN "\033[36m"
 
 void printShellHeader(){
-    getDisplayDir();
+    setDisplayDir();
     std::cout << F_GREEN << "┌──(" << CM_END;
     std::cout << B_BLUE << USR_NAME << '@' << HOST_NAME << CM_END;
     std::cout << F_GREEN << ")-[" << CM_END;
