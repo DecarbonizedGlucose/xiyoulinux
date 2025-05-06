@@ -85,12 +85,13 @@ void info_preset() {
     FG_PGID = getpgrp(); // 因为shell是前台进程组长
 }
 
-void cdset(std::string new_dir) {
+int cdset(std::string new_dir) {
     if (chdir(new_dir.c_str()) != 0) {
         std::cout << "cd : 没有这个目录" << std::endl;
-        return;
+        return -1;
     }
     LAST_PATH = CUR_PATH;
     CUR_PATH = new_dir;
     setDisplayDir();
+    return 0;
 }
