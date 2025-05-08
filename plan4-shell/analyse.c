@@ -24,9 +24,18 @@
 #define F_GREEN "\033[36m"
 
 void main_loop() {
-    static char curr_dir[MAX_DIR_LEN] = "/";
+    char curr_dir[MAX_DIR_LEN] = { 0 };
     char cmd[MAX_CMD_LEN];
-    char *host_name = getenv("HOSTNAME");
+    char host_name[MAX_CMD_LEN] = { 0 };
+    gethostname(host_name, sizeof(host_name));
+    if (strlen(host_name) == 0) {
+        perror("gethostname");
+        exit(EXIT_FAILURE);
+    }
+    if (host_name == NULL) {
+        perror("getenv");
+        exit(EXIT_FAILURE);
+    }
     uid_t uid = getuid();
     struct passwd* pw;
 
@@ -40,11 +49,18 @@ void main_loop() {
             perror("getcwd");
             exit(EXIT_FAILURE);
         }
+
+        char curr_dir_display[MAX_DIR_LEN];
+        if (strstr(curr_dir, "/home/") == 0) {
+            snprintf(curr_dir_display, sizeof(curr_dir_display), "~%s", curr_dir + strlen("/home/"));
+        } else {
+            snprintf(curr_dir_display, sizeof(curr_dir_display), "%s", curr_dir);
+        }
         
         printf("\n%s┌──(%s", F_GREEN, CM_END);
         printf("%s%s@%s%s", B_BLUE, pw->pw_name, host_name, CM_END);
         printf("%s)-[%s", F_GREEN, CM_END);
-        printf("%s%s%s", B_DFT, curr_dir, CM_END);
+        printf("%s%s%s", B_DFT, curr_dir_display, CM_END);
         printf("%s]%s\n", F_GREEN, CM_END);
         printf("%s└─%s", F_GREEN, CM_END);
         printf("%s$%s ", B_BLUE, CM_END);
@@ -69,8 +85,7 @@ void main_loop() {
             if (i < cmd_count - 1)
                 pipe(fds);
 
-            run(commands[i], in_fd,
-                            (i < cmd_count - 1) ? fds[1] : STDOUT_FILENO, 0);
+            run(commands[i], in_fd, (i < cmd_count - 1) ? fds[1] : STDOUT_FILENO, 0);
 
             if (i > 0)
                 close(in_fd);
