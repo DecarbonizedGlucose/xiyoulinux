@@ -12,7 +12,7 @@
 #define FILE_MODE 0644
 #define MAX_DIR_LEN 4096
 
-static int redire_pf(const char* filename, int flags, int std_fd) {
+int redire_pf(const char* filename, int flags, int std_fd) {
     int fd = open(filename, flags, FILE_MODE);
     if (fd < 0) {
         perror("open");
