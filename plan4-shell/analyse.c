@@ -23,7 +23,7 @@
 #define B_DFT "\033[1m"
 #define F_GREEN "\033[36m"
 
-void analyse() {
+void main_loop() {
     static char curr_dir[MAX_DIR_LEN] = "/";
     char cmd[MAX_CMD_LEN];
     char *host_name = getenv("HOSTNAME");

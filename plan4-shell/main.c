@@ -3,6 +3,6 @@
 
 int main() {
     signal_set();
-    analyse();
+    main_loop();
     return 0;
 }
