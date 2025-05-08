@@ -1,5 +1,5 @@
 # Xiyoulinux
 
-**linux-dir** Linux目录操作 : 实现自己的ls命令
-**proc-com** 进程通信 : 实现自己的shell
+**plan3-ls** Linux目录操作 : 实现自己的ls命令
+**plan4-shell** 进程通信 : 实现自己的shell
  
