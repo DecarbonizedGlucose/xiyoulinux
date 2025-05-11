@@ -6,8 +6,24 @@
 #include <future>
 #include <vector>
 
+/*
+    加一段注释，防止日后我回来看不懂
+
+    线程池的设计思路：
+
+    线程池包括一个（等待执行的）任务队列和多个工作线程，工作线程从任务队列中取出任务并执行。
+    线程池对外提供submit接口，用户将任意可调用对象(函数，函数指针，lambda，std::bind,std::function等)提交，最后加到队列中。
+
+    线程池有5种状态：
+    0: working 工作中
+    1: shutdown 在关闭（不再接受新任务，但会让工作中的线程继续工作）
+    2: stop 停止中（不再接受新任务，会中断正在执行的线程）
+    3: tidying 整理中（所有线程都已经结束，正在清理资源）
+    4: terminated 终止（所有线程都已经结束，资源已经清理完毕）
+*/
+
 template<typename T>
-class safe_queue {
+class safe_queue { // 额外加了一层锁的线程安全队列
 private:
     std::mutex m_Mutex;
     std::queue<T> m_Queue;
@@ -53,7 +69,7 @@ public:
 class thread_pool {
 private:
     /* ------------------------------------------- */
-    class thread_worker {
+    class thread_worker { // 内部类，真正去执行任务的
     private:
         thread_pool* pool_ptr;
         int m_Id;
@@ -69,7 +85,7 @@ private:
             while (pool_ptr->pool_status <= 1) {
                 std::function<void()> func;
                 bool got_task;
-                {
+                { // 这里把锁和执行关在一起，粒度小
                     std::unique_lock<std::mutex> lock(pool_ptr->m_Mutex);
                     if (pool_ptr->m_TaskQueue.empty()) {
                         pool_ptr->m_Condition.wait(lock);
@@ -119,7 +135,7 @@ public:
         m_Condition.notify_all();
         for (auto& worker : m_Workers) {
             if (worker.joinable()) {
-                worker.join();
+                worker.join(); // 等待所有线程结束
             }
         }
     }
@@ -130,15 +146,15 @@ public:
         m_TaskQueue.clear();
     }
 
+    // 任务提交函数，为了支持多种可调用对象，使用了泛型和完美转发
     template<typename F, typename... Args>
     auto submit(F&& f, Args&&... args) -> std::future<decltype(std::forward<F>(f)(std::forward<Args>(args)...))> {
-        using return_type = decltype(std::forward<F>(f)(std::forward<Args>(args)...));
+        using return_type = decltype(std::forward<F>(f)(std::forward<Args>(args)...)); // C++就是1to4
         std::function<return_type()> task_func = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
         auto task_ptr = std::make_shared<std::packaged_task<return_type()>>(task_func);
-        std::function<void()> run_task_func = [task_ptr]() {
+        m_TaskQueue.push([task_ptr]() { // 这里push的是一个labmda，类型其实是std::function<void()>
             (*task_ptr)();
-        };
-        m_TaskQueue.push(run_task_func);
+        });
         m_Condition.notify_one();
         return task_ptr->get_future(); // 返回先前注册的任务指针
     }
