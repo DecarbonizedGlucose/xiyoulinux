@@ -43,7 +43,7 @@ public:
         return m_Queue.size();
     }
 
-    void push(T& value) {
+    void push(T&& value) {
         std::unique_lock<std::mutex> lock(m_Mutex);
         m_Queue.push(value);
     }
@@ -88,6 +88,9 @@ private:
                 { // 这里把锁和执行关在一起，粒度小
                     std::unique_lock<std::mutex> lock(pool_ptr->m_Mutex);
                     if (pool_ptr->m_TaskQueue.empty()) {
+                        if (pool_ptr->pool_status == 1) {
+                            return;
+                        }
                         pool_ptr->m_Condition.wait(lock);
                     }
                     got_task = pool_ptr->m_TaskQueue.pop(func);
@@ -109,7 +112,7 @@ public:
     int pool_status = 0; // 0: working, 1: shutdown, 2: stop, 3: tidying, 4: terminated
     bool is_shutting_down = false;
 
-    thread_pool(int core_size = 30, int max_size = 50) : pool_core_size(core_size), pool_max_size(max_size) {}
+    thread_pool(int core_size = 4, int max_size = 8) : pool_core_size(core_size), pool_max_size(max_size) {}
 
     thread_pool(const thread_pool&) = delete;
     thread_pool& operator=(const thread_pool&) = delete;
@@ -128,16 +131,28 @@ public:
         }
     }
 
-    //void shutdown() {}
-
-    void stop() {
-        pool_status = 2;
+    void shutdown() {
+        pool_status = 1;
         m_Condition.notify_all();
         for (auto& worker : m_Workers) {
             if (worker.joinable()) {
+                std::cout << "joining one thread" << std::endl;
                 worker.join(); // 等待所有线程结束
             }
         }
+        std::cout << "all tasks finished" << std::endl;
+        tidy();
+    }
+
+    void stop() {
+        pool_status = 2;
+        for (auto& worker : m_Workers) {
+            if (worker.joinable()) {
+                std::cout << "joining one th" << std::endl;
+                worker.join(); // 等待所有线程结束
+            }
+        }
+        tidy();
     }
 
     void tidy() {
@@ -152,9 +167,13 @@ public:
         using return_type = decltype(std::forward<F>(f)(std::forward<Args>(args)...)); // C++就是1to4
         std::function<return_type()> task_func = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
         auto task_ptr = std::make_shared<std::packaged_task<return_type()>>(task_func);
-        m_TaskQueue.push([task_ptr]() { // 这里push的是一个labmda，类型其实是std::function<void()>
+        auto l_func = [task_ptr]() { // 这里push的是一个labmda，类型其实是std::function<void()>
             (*task_ptr)();
-        });
+        };
+        if (pool_status != 0) {
+            return std::future<return_type>(); // 线程池已经关闭，返回一个空的future
+        }
+        m_TaskQueue.push(l_func);
         m_Condition.notify_one();
         return task_ptr->get_future(); // 返回先前注册的任务指针
     }
