@@ -1,0 +1,14 @@
+read函数返回值
+    ret = read(...);
+    ret > 0:
+        ret是实际读到的字节数
+    ret == 0:
+        表示已经读到结尾，【对端已经关闭】
+    ret < 0:
+        应该进一步判断errno的值
+        EAGAIN || EWOULDBLOCK 设置了非阻塞方式读，没有数据到达
+        EINTR 慢速系统调用被中断
+        其他情况 异常
+
+命令：netstat -apn | grep client
+查看网络状态
