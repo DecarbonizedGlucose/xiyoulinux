@@ -111,6 +111,3 @@ shutdown关闭
     int shutdown(int sockfd, int how);
     how: SHUT_RD SHUT_WR SHUT_RDWR
 
-I/O多路复用：
-    select / poll / epoll
-
