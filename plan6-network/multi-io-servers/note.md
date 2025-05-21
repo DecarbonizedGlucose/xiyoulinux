@@ -37,21 +37,50 @@ void FD_ZERO(fd_set* set); // 清空
 ```
 
 ### select思路分析
+见simple-select-server.c
+
+### select缺点
+- fd_set受文件描述符限制，fd_set的大小是1024字节，最多只能监听1024个fd
+- 线性扫描，效率低下
+- 设计比较早，编码麻烦
+我只想监听特定的几个fd，对不起，做不到🤣
+得自己加业务逻辑，增加代码难度
+
+### select优点
+- 效率高
+- 唯一一个跨平台的多路io复用接口
+
+### select提高：增加自己的数组
+见array-select-server.c
+
+# poll
+比较鸡肋，跟个半成品似的，比较完善的是epoll。
+
+### poll函数
 ```c
-int main() {
-    lfd = socket();
-    bind();
-    listen();
-    fs_set rset, allset;
-    FD_ZERO(&allset);
-    FD_ZERO(&rset);
-    FD_SET(lfd, &rset);
-    ret = select(lfd + 1, &rset, NULL, NULL, NULL);
-    if (ret > 0) {
-        if (FD_ISSET(lfd, &rset)) {
-            cfd = accept();
-            FD_SET(cfd, &allset);
-        }
-    }
-}
+#include <poll.h>
+int poll(struct pollfd* fds, nfds_t nfds, int timeout);
+// fds: 传入的fd数组
+// nfds: 监听数组的实际有效监听个数
+// timeout: 超时
+
+struct pollfd {
+    int fd;         // 监听的fd
+    short events;   // 监听的事件(读/写/异常)
+    short revents;  // 返回的事件
+}; // 事件: `POLLIN`(可读) / `POLLOUT`(可写) / `POLLERR`(异常)
+```
+timeout跟select不一样. (int)milliseconds毫秒
+- \>0: 等待指定时间
+- 0: 立即返回
+- -1: 阻塞等待 select是NULL
+返回值：满足对应监听事件的fd数量
+这改进也没啥卵用(笑)
+
+# epoll
+只能用在linux上
+
+### epoll函数 *重点
+```c
+
 ```
