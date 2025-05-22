@@ -1,6 +1,7 @@
 /*
     使用epoll实现的多路IO复用服务器
     epoll-server.c
+    默认水平触发
 */
 
 #include <stdio.h>
