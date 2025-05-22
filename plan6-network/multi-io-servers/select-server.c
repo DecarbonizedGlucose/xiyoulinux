@@ -1,6 +1,6 @@
 /*
     简单的多路复用IO服务器(select)
-    simple-select-server.c
+    select-server.c
 */
 
 #include <stdio.h>

@@ -1,3 +1,8 @@
+/*
+    使用epoll实现的多路IO复用服务器
+    epoll-server.c
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
