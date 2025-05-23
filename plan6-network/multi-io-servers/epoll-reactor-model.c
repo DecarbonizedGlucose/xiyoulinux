@@ -24,32 +24,88 @@
 #define MAX_CLNT 128
 #define OPEN_MAX 1024
 
-void recvdata(int fd, int events, void* arg) {
-    struct myevent_s* pmye = (struct myevent_s*)arg;
-    int len = Read(fd, pmye->buf, sizeof(pmye->buf));
-
-}
-
-void senddata(int fd, int events, void* arg) {
-    struct myevent_s* pmye = (struct myevent_s*)arg;
-    
-}
-
+/*
+    这样每个事件都有独立的处理空间
+    更加灵活，适合封装使用
+*/
 struct myevent_s {
     int    fd;                                           /* 要监听的fd */
     int    events;                                       /* 监听事件 */
     void*  arg;                                          /* 泛型参数 */
-    void   (*call_back)(int fd, int events, void* arg);  /* 事件回调函数 */
+    void   (*call_back)(int fd,/*, int events, */ void* arg);  /* 事件回调函数 */
     int    status;                                       /* 事件监听状态 1: 在树上 0: 不在*/
     char   buf[BUFSIZ];
     int    buflen;
     long   last_active;                                  /* 上次加入红黑树的时间值 */
 };
 
+int g_efd;
+struct myevent_s g_events[MAX_EVENTS + 1]; // 事件数组, 最后一个留给lfd
+void recvdata(int fd, void* arg);
+void senddata(int fd, void* arg);
 void set_event(
     struct myevent_s* ev,
     int fd,
-    void (*call_back)(int, int, void*),
+    void (*call_back)(int, /*int, */void*),
+    void* arg
+);
+void add_event(int efd, int events, struct myevent_s* myev);
+void del_event(int efd, struct myevent_s* myev);
+void acceptconn(int lfd, void* arg);
+void initlistensocket(int efd, struct myevent_s events[], short port);
+
+void recvdata(int fd, void* arg) {
+    struct myevent_s* pmye = (struct myevent_s*)arg;
+    int n = Read(fd, pmye->buf, sizeof(pmye->buf));
+    if (n == -1) {
+        Close(fd);
+        printf("Client read error: %d\n", fd);
+        return;
+    }
+    else if (n == 0) {
+        Close(fd);
+        printf("Client closed connection: %d\n", fd);
+        return;
+    }
+    del_event(g_efd, pmye);
+    if (n < sizeof(pmye->buf)) {
+        pmye->buf[n] = '\0';
+        pmye->buflen = n;
+    } else {
+        pmye->buf[sizeof(pmye->buf) - 1] = '\0';
+        pmye->buflen = sizeof(pmye->buf) - 1;
+    }
+    printf("Received from client %d: %s\n", fd, pmye->buf);
+    // 处理数据
+    for (int i=0; i<n; ++i) {
+        pmye->buf[i] = toupper(pmye->buf[i]);
+    }
+    printf("Processed data: %s\n", pmye->buf);
+    // 发送数据
+    set_event(pmye, fd, senddata, pmye);
+    add_event(g_efd, EPOLLOUT | EPOLLET, pmye);
+}
+
+void senddata(int fd, void* arg) {
+    struct myevent_s* pmye = (struct myevent_s*)arg;
+    int n = Write(fd, pmye->buf, pmye->buflen);
+    if (n == -1) {
+        Close(fd);
+        printf("Server write error: %d\n", fd);
+        return;
+    }
+    printf("Server %d sent: %.*s\n", fd, pmye->buflen, pmye->buf);
+    del_event(g_efd, pmye);
+    //pmye->buflen = 0;
+    //pmye->buf[0] = '\0';
+    set_event(pmye, fd, recvdata, pmye);
+    add_event(g_efd, EPOLLIN | EPOLLET, pmye);
+}
+
+void set_event(
+    struct myevent_s* ev,
+    int fd,
+    void (*call_back)(int, /*int, */void*),
     void* arg
 ) {
     ev->fd = fd;
@@ -57,8 +113,8 @@ void set_event(
     ev->events = 0;
     ev->arg = arg;
     ev->status = 0;
-    memset(ev->buf, 0, sizeof(ev->buf));
-    ev->buflen = 0;
+    //memset(ev->buf, 0, sizeof(ev->buf));
+    //ev->buflen = 0;
     ev->last_active = time(NULL);
 }
 
@@ -89,7 +145,6 @@ void del_event(int efd, struct myevent_s* myev) {
     myev->status = 0;
     epoll_ctl(efd, EPOLL_CTL_DEL, myev->fd, NULL);
     printf("Deleted event: fd=%d\n", myev->fd);
-    Close(myev->fd);
     /*
     myev->fd = -1;
     myev->events = 0;
@@ -102,10 +157,7 @@ void del_event(int efd, struct myevent_s* myev) {
     return;
 }
 
-int g_efd;
-struct myevent_s* g_events[MAX_EVENTS + 1]; // 事件数组, 最后一个留给lfd
-
-void acceptconn(int lfd, int events, void* arg) { // 把新来的连接加入到红黑树上
+void acceptconn(int lfd, void*) { // 把新来的连接加入到红黑树上
     struct sockaddr_in clnt_addr;
     int i;
     socklen_t clnt_addr_len = sizeof(clnt_addr);
@@ -116,8 +168,8 @@ void acceptconn(int lfd, int events, void* arg) { // 把新来的连接加入到
     struct myevent_s* pmye;
     do {
         for (i=0; i<MAX_EVENTS; ++i) {
-            if (g_events[i]->status == 0) {
-                pmye = g_events[i];
+            if (g_events[i].status == 0) {
+                pmye = g_events + i;
                 break;
             }
         }
@@ -130,12 +182,14 @@ void acceptconn(int lfd, int events, void* arg) { // 把新来的连接加入到
         if (flag == -1) {
             printf("%s: failed to set non-blocking: %s\n", __func__, strerror(errno));
         }
-        set_event(pyme, cfd, recvdata, pmye);
+        set_event(pmye, cfd, recvdata, pmye);
+        pmye->buflen = 0;
+        pmye->buf[0] = '\0';
         add_event(g_efd, EPOLLIN | EPOLLET, pmye);
     } while (0);
 }
 
-void initlistensocket(int efd, short port) {
+void initlistensocket(int efd, struct myevent_s events[], short port) {
     int lfd;
     struct sockaddr_in serv_addr;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
@@ -146,12 +200,12 @@ void initlistensocket(int efd, short port) {
     setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     Bind(lfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
     Listen(lfd, MAX_CLNT);
-    set_event(&g_events[MAX_EVENTS], lfd, acceptconn, &g_events[MAX_EVENTS]);
-    add_event(g_efd, EPOLLIN, &g_events[MAX_EVENTS]);
+    set_event(&events[MAX_EVENTS], lfd, acceptconn, &events[MAX_EVENTS]);
+    add_event(efd, EPOLLIN, &events[MAX_EVENTS]);
 }
 
 int main() {
-    int ret, nready;
+    int nready;
     struct epoll_event ep[OPEN_MAX]; // epoll相关
 
     g_efd = epoll_create(OPEN_MAX);
@@ -159,10 +213,8 @@ int main() {
         perr_exit("epoll_create");
     }
 
-    initlistensocket(g_efd, SERV_PORT);
-    if (ret == -1) {
-        perr_exit("epoll_ctl");
-    }
+    initlistensocket(g_efd, g_events, SERV_PORT);
+    int lfd = g_events[MAX_EVENTS].fd;
 
     while (1) {
         nready = epoll_wait(g_efd, ep, OPEN_MAX, 1000); // 阻塞等待
@@ -175,23 +227,18 @@ int main() {
         else {
             // 有事件发生
             for (int i=0; i<nready; ++i) {
-                if (ep[i].data.fd == lfd) {
-                    acceptconn(lfd, ep[i].events, &g_events[MAX_EVENTS]);
+                struct myevent_s* ev = (struct myevent_s*)ep[i].data.ptr;
+                if ((ep[i].events & EPOLLIN) && (ev->events & EPOLLIN)) {
+                    ev->call_back(ev->fd, ev->arg);
                 }
-                else {
-                    struct myevent_t* ev = ep[i].data.ptr;
-                    if ((ep[i].events & EPOLLIN) && (ev.events & EPOLLIN)) {
-                        ev->call_back(ev->fd, ep[i].events, ev->arg);
-                    }
-                    if ((ep[i].events & EPOLLOUT) && (ev.events & EPOLLOUT)) {
-                        ev->call_back(ev->fd, ep[i].events, ev->arg);
-                    }
+                if ((ep[i].events & EPOLLOUT) && (ev->events & EPOLLOUT)) {
+                    ev->call_back(ev->fd, ev->arg);
                 }
             }
         }
     }
 
     Close(lfd);
-    CLose(g_efd);
+    Close(g_efd);
     return 0;
 }
