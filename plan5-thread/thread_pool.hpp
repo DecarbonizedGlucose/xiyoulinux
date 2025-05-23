@@ -43,7 +43,7 @@ public:
         return m_Queue.size();
     }
 
-    void push(T&& value) {
+    void push(T& value) {
         std::unique_lock<std::mutex> lock(m_Mutex);
         m_Queue.push(value);
     }
@@ -167,7 +167,7 @@ public:
         using return_type = decltype(std::forward<F>(f)(std::forward<Args>(args)...)); // C++就是1to4
         std::function<return_type()> task_func = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
         auto task_ptr = std::make_shared<std::packaged_task<return_type()>>(task_func);
-        auto l_func = [task_ptr]() { // 这里push的是一个labmda，类型其实是std::function<void()>
+        std::function<void()> l_func = [task_ptr]() { // 这里push的是一个labmda，类型其实是std::function<void()>
             (*task_ptr)();
         };
         if (pool_status != 0) {
