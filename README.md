@@ -6,4 +6,6 @@
  
 **plan5-thread** 线程同步 : 基于C++11实现的线程池
 
-**plan6-network**
+**plan6-network** 网络通信 : 一个FTP服务器
+
+**plan7-chatroom** 一个聊天室
