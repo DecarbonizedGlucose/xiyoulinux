@@ -136,11 +136,11 @@ public:
         m_Condition.notify_all();
         for (auto& worker : m_Workers) {
             if (worker.joinable()) {
-                std::cout << "joining one thread" << std::endl;
+                //std::cout << "joining one thread" << std::endl;
                 worker.join(); // 等待所有线程结束
             }
         }
-        std::cout << "all tasks finished" << std::endl;
+        //std::cout << "all tasks finished" << std::endl;
         tidy();
     }
 
@@ -148,7 +148,7 @@ public:
         pool_status = 2;
         for (auto& worker : m_Workers) {
             if (worker.joinable()) {
-                std::cout << "joining one th" << std::endl;
+                //std::cout << "joining one th" << std::endl;
                 worker.join(); // 等待所有线程结束
             }
         }
