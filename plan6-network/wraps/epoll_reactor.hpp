@@ -17,7 +17,16 @@
 #include <functional>
 #include <memory>
 #include <iostream>
+#include "func_wrapper.hpp"
 #include "net.hpp"
+
+template<typename F, typename... Args>
+auto func_wrapper(F&& f, Args&&... args)
+-> std::function<decltype(std::forward<F>(f)(std::forward<Args>(args)...))()> {
+    using return_type = decltype(std::forward<F>(f)(std::forward<Args>(args)...));
+    std::function<return_type()> binded_func = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
+    return binded_func();
+}
 
 namespace net {
     //const int MAX_EVENTS = 50;
@@ -59,75 +68,54 @@ public:
 };
 
 class reactor::event {
-private:
-    reactor* parent_reactor = nullptr;
 public:
+    reactor* parent_reactor = nullptr;
     int fd = -1;
     int events;
     int status = 0; // 0: not in reactor, 1: in reactor
-    void* buf = nullptr;
+    char* buf = nullptr;
     int buflen = 0;
+    int buffer_size = 0; // 缓冲区大小
     time_t last_active;
-    // 守旧派
-    void (*call_back_func_c)(int, void*) = nullptr;
-    void* arg = this;
     // 维新派
     std::function<void()> call_back_func_cpp = nullptr;
 
     event() = delete;
-    event(int fd, int events, void (*call_back)(int, void*), void* arg);
-    event(int fd, int events, void (*call_back)(int, void*));
+    event(int fd, int events, int buffer_size, std::function<void()> call_back_func);
+    event(int fd, int events, int buffer_size);
     event(event&& other) = delete;
     event(const event&) = delete;
     event& operator=(const event&) = delete;
     event& operator=(event&& other) = delete;
     ~event();
-    void set(int fd, int events, void (*call_back)(int, void*), void* arg);
-    void set(int fd, int events, void (*call_back)(int, void*));
     void set(int fd, int events, std::function<void()> call_back_func);
     void set_events(int events);
     bool add_to(reactor* parent_reactor);
     void del_from_reactor();
-    static void recvdata(int fd, void* arg);
-    static void senddata(int fd, void* arg);
-    static void acceptconn(int lfd, void* arg);
+    static void recvdata(int fd, event* pev, std::function<int(char*)> rtask, std::function<int(char*)> wtask);
+    static void senddata(int fd, event* pev, std::function<int(char*)> rtask, std::function<int(char*)> wtask);
+    static void accept_connection(int lfd, event* pev);
     void call_back();
+    bool is_buf_full() const;
 };
 
-reactor::event::event(int fd, int events, void (*call_back)(int, void*), void* arg)
-    : fd(fd), events(events), call_back_func_c(call_back), arg(arg), parent_reactor(nullptr),
+reactor::event::event(int fd, int events, int buffer_size, std::function<void()> call_back_func)
+    : fd(fd), events(events), call_back_func_cpp(call_back_func), buffer_size(buffer_size),
     status(0), buflen(0), last_active(time(nullptr)) {
-    this->buf = new char[parent_reactor->buffer_size];
+    this->buf = new char[buffer_size = 1];
+    this->buf[buffer_size] = '\0';
 }
 
-reactor::event::event(int fd, int events, void (*call_back)(int, void*))
-    : fd(fd), events(events), call_back_func_c(call_back), arg(arg), parent_reactor(nullptr),
+reactor::event::event(int fd, int events, int buffer_size)
+    : fd(fd), events(events), buffer_size(buffer_size),
     status(0), buflen(0), last_active(time(nullptr)) {
-    this->buf = new char[parent_reactor->buffer_size];
+    this->buf = new char[buffer_size + 1];
+    this->buf[buffer_size] = '\0';
 }
 
 reactor::event::~event() {
     delete[] buf;
     Close(fd);
-}
-
-void reactor::event::set(int fd, int events, void (*call_back)(int, void*), void* arg) {
-    this->fd = fd;
-    this->events = events;
-    this->call_back_func_c = call_back;
-    this->arg = arg;
-    this->status = 0;
-    this->buflen = 0;
-    this->last_active = time(nullptr);
-}
-
-void reactor::event::set(int fd, int events, void (*call_back)(int, void*)) {
-    this->fd = fd;
-    this->events = events;
-    this->call_back_func_c = call_back;
-    this->status = 0;
-    this->buflen = 0;
-    this->last_active = time(nullptr);
 }
 
 void reactor::event::set(int fd, int events, std::function<void()> call_back_func) {
@@ -137,7 +125,6 @@ void reactor::event::set(int fd, int events, std::function<void()> call_back_fun
     this->status = 0;
     this->buflen = 0;
     this->last_active = time(nullptr);
-    this->call_back_func_c = nullptr; // 清除旧的回调函数
 }
 
 void reactor::event::set_events(int events) {
@@ -181,9 +168,8 @@ void reactor::event::del_from_reactor() {
     }
 }
 
-void reactor::event::recvdata(int fd, void* arg) {
-    reactor::event* ev = static_cast<reactor::event*>(arg);
-    ssize_t nread = Read(ev->fd, ev->buf, ev->parent_reactor->buffer_size);
+void reactor::event::recvdata(int fd, event* pev, std::function<int(char*)> rtask, std::function<int(char*)> wtask) {
+    ssize_t nread = Read(pev->fd, pev->buf, pev->buffer_size);
     do {
         if (nread < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -191,38 +177,112 @@ void reactor::event::recvdata(int fd, void* arg) {
                 return; // 没有数据可读
             }
             std::cerr << "读取数据失败: " << strerror(errno) << std::endl;
-            ev->del_from_reactor();
+            pev->del_from_reactor();
             break;
         }
         else if (nread == 0) {
-            std::cout << "客户端关闭连接: fd=" << ev->fd << std::endl;
-            ev->del_from_reactor();
+            std::cout << "客户端关闭连接: fd=" << pev->fd << std::endl;
+            pev->del_from_reactor();
             break; // 客户端关闭连接
         }
-        ev->del_from_reactor();
-        ev->buflen = nread;
-        static_cast<char*>(ev->buf)[nread] = '\0'; // 确保字符串结束
+        pev->del_from_reactor();
+        pev->buflen = nread;
+        int next_event;
         /* ----- 处理接收的数据的业务逻辑部分 -----*/
-
+        if (pev->is_buf_full()) {
+            std::cerr << "缓冲区已满，无法继续接收数据." << std::endl;
+            next_event = EPOLLIN | EPOLLET; // 继续监听可读事件
+            rtask(pev->buf); // 调用任务处理函数
+        }
+        else {
+            next_event = rtask(pev->buf); // 调用任务处理函数
+        }
+        if (next_event & EPOLLIN) {
+            pev->call_back_func_cpp = func_wrapper(event::recvdata, pev->fd, pev, rtask, wtask);
+        }
+        else {
+            pev->call_back_func_cpp = func_wrapper(event::senddata, pev->fd, pev, rtask, wtask);
+        }
         /* ----------------------------------- */
-        //ev->set_events(EPOLLOUT | EPOLLET); // 设置为可写事件?
-        ev->add_to(ev->parent_reactor); // 重新添加到反应堆
+        pev->set_events(next_event);
+        pev->add_to(pev->parent_reactor); // 重新添加到反应堆
         return;
     } while (0);
-    Close(ev->fd);
+    Close(pev->fd);
 }
 
-void reactor::event::senddata(int fd, void* arg) {}
+void reactor::event::senddata(int fd, event* pev, std::function<int(char*)> rtask, std::function<int(char*)> wtask) {
+    ssize_t nread = Write(pev->fd, pev->buf, pev->buflen);
+    do {
+        if (nread == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::cerr << "非阻塞写入数据时没有数据可写." << std::endl;
+                return; // 没有数据可写
+            }
+            std::cerr << "写入数据失败: " << strerror(errno) << std::endl;
+            pev->del_from_reactor();
+            break;
+        }
+        pev->del_from_reactor();
+        int next_event = wtask(pev->buf); // 调用任务处理函数
+        if (next_event & EPOLLIN) {
+            pev->call_back_func_cpp = func_wrapper(event::recvdata, pev->fd, pev, rtask, wtask);
+        }
+        else {
+            pev->call_back_func_cpp = func_wrapper(event::senddata, pev->fd, pev, rtask, wtask);
+        }
+        pev->set_events(next_event);
+        pev->add_to(pev->parent_reactor); // 重新添加到反应堆
+        return;
+    } while (0);
+}
+
+void reactor::event::accept_connection(int lfd, event* pev) {
+    int i;
+    struct sockaddr_in clnt_addr;
+    socklen_t clnt_addr_len = sizeof(clnt_addr);
+    int cfd = Accept(lfd, (struct sockaddr*)&clnt_addr, &clnt_addr_len);
+    do {
+        if (cfd < 0) {
+            std::cerr << "接受连接失败: " << strerror(errno) << std::endl;
+            break;
+        }
+        std::cout << "新连接: fd=" << cfd << ", 客户端地址=" << inet_ntoa(clnt_addr.sin_addr) << std::endl;
+        for (i = 0; i < pev->parent_reactor->max_events; ++i) {
+            if (pev->parent_reactor->events[i] == nullptr) {
+                break; // 找到一个空闲的事件槽
+            }
+        }
+        if (i == pev->parent_reactor->max_events) {
+            std::cerr << "没有足够的事件槽来处理新连接." << std::endl;
+            break;
+        }
+        int flag = fcntl(cfd, F_GETFL, O_NONBLOCK);
+        if (flag == -1) {
+            std::cerr << "设置非阻塞失败: " << strerror(errno) << std::endl;
+            break;
+        }
+        pev->parent_reactor->events[i] = new event(cfd, EPOLLIN | EPOLLET, pev->buffer_size);
+        /*
+            设置回调函数
+            funcs还没写完
+        */
+        return;
+    } while (0);
+    Close(cfd);
+}
 
 void reactor::event::call_back() {
-        if (call_back_func_cpp) {
-            call_back_func_cpp();
-        } else if (call_back_func_c) {
-            call_back_func_c(fd, arg);
-        } else {
-            std::cerr << fd << "的事件没有回调函数" << std::endl;
-        }
+    if (this->call_back_func_cpp) {
+        this->call_back_func_cpp(); // 调用C++风格的回调函数
+    } else {
+        std::cerr << "没有设置回调函数." << std::endl;
     }
+}
+
+bool reactor::event::is_buf_full() const {
+    return (buflen > 0 && buf[buflen - 1] == '\0');
+}
 
 reactor::reactor(
     std::string ip = "", short port = 8080, sa_family_t family = AF_INET,
@@ -280,7 +340,8 @@ void reactor::listen_init() {
             std::cerr << "Listen error: " << strerror(errno) << std::endl;
             break;
         }
-        event* pe = new event(this->listen_fd, EPOLLIN, event::acceptconn);
+        event* pe = new event(this->listen_fd, (int)EPOLLIN, this->buffer_size);
+        pe->call_back_func_cpp = func_wrapper(event::accept_connection, this->listen_fd, pe);
         if (pe->add_to(this) == false) {
             std::cerr << "Failed to add listen event to reactor: " << strerror(errno) << std::endl;
             delete pe;
